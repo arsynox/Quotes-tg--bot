@@ -1,100 +1,71 @@
 import os
-import logging
+import asyncio
 import requests
-from telegram import Bot, Update
-from telegram.ext import Application, ContextTypes
 from flask import Flask, request
-
-app = Flask(__name__)
-
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+from telegram import Bot, Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # Environment variables
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHANNEL_ID = os.getenv('CHANNEL_ID')  # Format: -1001234567890 or @channelname
-QUOTE_API = 'https://quotes-api-w4zt.onrender.com/api/quotes/random'
-RENDER_EXTERNAL_URL = os.getenv('RENDER_EXTERNAL_URL')
+TOKEN = os.environ.get("BOT_TOKEN")
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
+CHANNEL_ID = os.environ.get("CHANNEL_ID")  # e.g. '@yourchannel' or -1001234567890
 
-# Initialize Telegram Bot
-application = Application.builder().token(TELEGRAM_TOKEN).build()
+bot = Bot(token=TOKEN)
+app = Flask(__name__)
+application = ApplicationBuilder().token(TOKEN).build()
 
-def get_formatted_quote():
-    try:
-        response = requests.get(QUOTE_API)
-        response.raise_for_status()
-        data = response.json()
-        
-        return (
-            f"✨ Inspirational Quote\n\n"
-            f"╔〇══════════════════════〇\n"
-            f"║  {data['author']} ✍️\n"
-            f"╚〇══════════════════════〇\n\n"
-            f"❝ {data['quote']} ❞\n\n"
-            f"〇━━━━━━━━━━━━━━━━━━━━━━━〇\n"
-            f"📌 ❖ ARSYNOX\n"
-            f"〇━━━━━━━━━━━━━━━━━━━━━━━〇"
-        )
-    except Exception as e:
-        logger.error(f"Quote Error: {e}")
-        return None
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Hello! I'm your Inspirational Quote Bot.")
 
-async def send_quote(context: ContextTypes.DEFAULT_TYPE):
-    try:
-        message = get_formatted_quote()
-        if message:
-            await context.bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=message,
-                parse_mode='HTML'
-            )
-            logger.info("Quote sent to channel")
-    except Exception as e:
-        logger.error(f"Sending Failed: {e}")
+application.add_handler(CommandHandler("start", start))
 
-@app.route('/')
-def home():
-    return "🚀 Bot Active | Use /send-quote to trigger manually"
+@app.route(f"/{TOKEN}", methods=["POST"])
+async def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    await application.process_update(update)
+    return "OK", 200
 
-@app.route('/send-quote', methods=['GET'])
-def manual_trigger():
-    try:
-        application.job_queue.run_once(send_quote, when=0)
-        return "✅ Quote queued!", 200
-    except Exception as e:
-        return f"❌ Error: {e}", 500
+@app.route("/", methods=["GET"])
+def index():
+    return "🚀 Inspirational Quotes Bot is running!"
 
-@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-def webhook():
-    try:
-        update = Update.de_json(request.get_json(), application.bot)
-        application.process_update(update)
-        return 'OK', 200
-    except Exception as e:
-        logger.error(f"Webhook Error: {e}")
-        return 'ERROR', 500
-
-def main():
-    # Schedule quotes every 5 minutes
-    job_queue = application.job_queue
-    job_queue.run_repeating(
-        callback=send_quote,
-        interval=300,
-        first=10
+def format_quote(data):
+    author = data.get("author", "Unknown")
+    quote = data.get("quote", "No quote available.")
+    return (
+        f"✨ Inspirational Quote\n\n"
+        f"╔〇══════════════════════〇\n"
+        f"║  {author} ✍️\n"
+        f"╚〇══════════════════════〇\n\n"
+        f"❝ {quote} ❞\n\n"
+        f"〇━━━━━━━━━━━━━━━━━━━━━━━〇\n"
+        f"📌 ❖ ARSYNOX\n"
+        f"〇━━━━━━━━━━━━━━━━━━━━━━━〇"
     )
 
-    # Webhook configuration for Render
-    port = int(os.environ.get('PORT', 10000))
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        webhook_url=f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}",
-        secret_token=os.getenv('WEBHOOK_SECRET')
-    )
+def fetch_quote():
+    try:
+        res = requests.get("https://quotes-api-w4zt.onrender.com/api/quotes/random", timeout=5)
+        if res.status_code == 200:
+            return format_quote(res.json())
+        else:
+            return "Could not fetch quote."
+    except Exception as e:
+        return f"Error fetching quote: {e}"
+
+async def auto_send_quote():
+    while True:
+        quote = fetch_quote()
+        try:
+            await bot.send_message(chat_id=CHANNEL_ID, text=quote)
+        except Exception as e:
+            print(f"[ERROR] Failed to send quote: {e}")
+        await asyncio.sleep(300)
+
+@app.before_first_request
+def setup():
+    bot.set_webhook(url=f"{RENDER_EXTERNAL_URL}/{TOKEN}")
+    asyncio.create_task(auto_send_quote())
 
 if __name__ == "__main__":
-    main()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
