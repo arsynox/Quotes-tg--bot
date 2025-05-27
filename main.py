@@ -66,7 +66,7 @@ if __name__ == "__main__":
     
     # जॉब क्यू सेटअप (हर 5 मिनट)
     job_queue = application.job_queue
-    job_queue.run_repeating(send_quote, interval=300, first=10)
+    job_queue.run_repeating(send_quote, interval=30, first=10)
     
     # Render पोर्ट कॉन्फ़िगरेशन
     port = int(os.environ.get('PORT', 5000))
