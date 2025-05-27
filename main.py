@@ -4,8 +4,8 @@ import asyncio
 import threading
 import requests
 from flask import Flask, request
-from telegram import Bot, Update
-from telegram.ext import Dispatcher, CommandHandler
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,10 +14,8 @@ TOKEN = os.getenv("TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 
-bot = Bot(token=TOKEN)
 app = Flask(__name__)
-
-dispatcher = Dispatcher(bot=bot, update_queue=None, use_context=True)
+application = Application.builder().token(TOKEN).build()
 
 def fetch_quote():
     try:
@@ -51,7 +49,7 @@ async def auto_send_quote():
         if quote and author:
             message = format_quote_message(quote, author)
             try:
-                await bot.send_message(chat_id=CHANNEL_ID, text=message)
+                await application.bot.send_message(chat_id=CHANNEL_ID, text=message)
                 print("Quote sent successfully!")
             except Exception as e:
                 print(f"Error sending quote: {e}")
@@ -68,12 +66,14 @@ def start_auto_quote_thread():
 def activate_job():
     thread = threading.Thread(target=start_auto_quote_thread)
     thread.start()
-    bot.set_webhook(url=f"{RENDER_EXTERNAL_URL}/{TOKEN}")
+    webhook_url = f"{RENDER_EXTERNAL_URL}/{TOKEN}"
+    asyncio.run(application.bot.set_webhook(webhook_url))
 
 @app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
+async def webhook():
+    data = request.get_json(force=True)
+    update = Update.de_json(data, application.bot)
+    await application.process_update(update)
     return "OK"
 
 @app.route("/", methods=["GET"])
